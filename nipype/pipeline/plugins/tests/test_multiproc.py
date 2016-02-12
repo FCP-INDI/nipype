@@ -6,12 +6,15 @@ from shutil import rmtree
 from nipype.testing import assert_equal, assert_less_equal
 import nipype.pipeline.engine as pe
 
+ 
 class InputSpec(nib.TraitedSpec):
     input1 = nib.traits.Int(desc='a random int')
     input2 = nib.traits.Int(desc='a random int')
 
+
 class OutputSpec(nib.TraitedSpec):
     output1 = nib.traits.List(nib.traits.Int, desc='outputs')
+
 
 class TestInterface(nib.BaseInterface):
     input_spec = InputSpec
@@ -26,28 +29,28 @@ class TestInterface(nib.BaseInterface):
         outputs['output1'] = [1, self.inputs.input1]
         return outputs
 
+
 def test_run_multiproc():
     cur_dir = os.getcwd()
     temp_dir = mkdtemp(prefix='test_engine_')
     os.chdir(temp_dir)
 
     pipe = pe.Workflow(name='pipe')
-    mod1 = pe.Node(interface=TestInterface(),name='mod1')
+    mod1 = pe.Node(interface=TestInterface(), name='mod1')
     mod2 = pe.MapNode(interface=TestInterface(),
                       iterfield=['input1'],
                       name='mod2')
-    pipe.connect([(mod1,mod2,[('output1','input1')])])
+    pipe.connect([(mod1, mod2, [('output1', 'input1')])])
     pipe.base_dir = os.getcwd()
     mod1.inputs.input1 = 1
     pipe.config['execution']['poll_sleep_duration'] = 2
-    execgraph = pipe.run(plugin="MultiProc")
-    names = ['.'.join((node._hierarchy,node.name)) for node in execgraph.nodes()]
+    execgraph = pipe.run(plugin="ResourceMultiProc")
+    names = ['.'.join((node._hierarchy, node.name)) for node in execgraph.nodes()]
     node = execgraph.nodes()[names.index('pipe.mod1')]
     result = node.get_output('output1')
     yield assert_equal, result, [1, 1]
     os.chdir(cur_dir)
     rmtree(temp_dir)
-
 
 ################################
 
@@ -180,6 +183,8 @@ def test_do_not_use_more_memory_then_specified():
     os.remove(LOG_FILENAME)
 
 
+
+
 def test_do_not_use_more_threads_then_specified():
     LOG_FILENAME = 'callback.log'
     my_logger = logging.getLogger('callback')
@@ -207,7 +212,8 @@ def test_do_not_use_more_threads_then_specified():
     pipe.connect(n3, 'output1', n4, 'input2')
     n1.inputs.input1 = 10
     pipe.config['execution']['poll_sleep_duration'] = 1
-    pipe.run(plugin='ResourceMultiProc', plugin_args={'n_procs': max_threads, 'status_callback': log_nodes_cb})
+    pipe.run(plugin='ResourceMultiProc', plugin_args={'n_procs': max_threads,
+                                                      'status_callback': log_nodes_cb})
 
     nodes, last_node = draw_gantt_chart.log_to_json(LOG_FILENAME)
     #usage in every second
@@ -230,3 +236,4 @@ def test_do_not_use_more_threads_then_specified():
     yield assert_equal, result, True, "using more memory than system has (memory is not specified by user)"
 
     os.remove(LOG_FILENAME)
+

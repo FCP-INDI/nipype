@@ -3,32 +3,39 @@ from dateutil import parser
 import datetime
 import random
 
-
+ 
 def log_to_json(logfile):
     result = []
     with open(logfile, 'r') as content:
 
-            #read file separating each line
-            content = content.read()
-            lines = content.split('\n')
+        #read file separating each line
+        content = content.read()
+        lines = content.split('\n')
+        l = []
+        for i in lines:
+            try:
+                y = json.loads(i)
+                l.append(y)
+            except Exception, e:
+                pass
 
-            lines = [ json.loads(x) for x in lines[:-1]]
+        lines = l
 
-            last_node = [ x for x in lines if x.has_key('finish')][-1]
+        last_node = [ x for x in lines if x.has_key('finish')][-1]
 
-            for i, line in enumerate(lines):
-                #get first start it finds
-                if not line.has_key('start'):
-                    continue
+        for i, line in enumerate(lines):
+            #get first start it finds
+            if not line.has_key('start'):
+                continue
 
-                #fint the end node for that start
-                for j in range(i+1, len(lines)):
-                    if lines[j].has_key('finish'):
-                        if lines[j]['id'] == line['id'] and lines[j]['name'] == line['name']:
-                            line['finish'] = lines[j]['finish']
-                            line['duration'] = (parser.parse(line['finish']) - parser.parse(line['start'])).total_seconds()
-                            result.append(line)
-                            break
+            #fint the end node for that start
+            for j in range(i+1, len(lines)):
+                if lines[j].has_key('finish'):
+                    if lines[j]['id'] == line['id'] and lines[j]['name'] == line['name']:
+                        line['finish'] = lines[j]['finish']
+                        line['duration'] = (parser.parse(line['finish']) - parser.parse(line['start'])).total_seconds()
+                        result.append(line)
+                        break
 
     return result, last_node
 
@@ -247,8 +254,8 @@ def generate_gantt_chart(logfile, cores, minute_scale=10, space_between_minutes=
     #draw nodes
     html_string += draw_nodes(start, result, cores, scale, colors)
 
-    html_string += draw_thread_bar(start, duration, result, space_between_minutes, minute_scale)
-    html_string += draw_memory_bar(start, duration, result, space_between_minutes, minute_scale)
+    #html_string += draw_thread_bar(start, duration, result, space_between_minutes, minute_scale)
+    #html_string += draw_memory_bar(start, duration, result, space_between_minutes, minute_scale)
 
     #finish html
     html_string+= '''

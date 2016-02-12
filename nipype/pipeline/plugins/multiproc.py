@@ -9,27 +9,53 @@ http://stackoverflow.com/a/8963618/1183453
 from multiprocessing import Process, Pool, cpu_count, pool
 from traceback import format_exception
 import sys
-
+import numpy as np
+from copy import deepcopy
+from ..engine import MapNode
+from ...utils.misc import str2bool
+import datetime
+import psutil
+from ... import logging
+import semaphore_singleton
 from .base import (DistributedPluginBase, report_crash)
 
 
-def run_node(node, updatehash, plugin_args=None):
-    result = dict(result=None, traceback=None)
+# Run node
+def run_node(node, updatehash, runtime_profile=False):
+    """docstring
+    """
+ 
+    # Import packages
     try:
-        run_memory = plugin_args['memory_profile']
-    except Exception:
-        run_memory = False
-    if run_memory:
         import memory_profiler
         import datetime
-        proc = (node.run, (), {'updatehash' : updatehash})
-        start = datetime.datetime.now()
-        mem_mb, retval = memory_profiler.memory_usage(proc=proc, retval=True, include_children=True, max_usage=True)
-        runtime = (datetime.datetime.now() - start).total_seconds()
-        result['result'] = retval
-        result['real_memory'] = mem_mb[0]/1024.0
-        result['real_memory2'] = retval.runtime.get('real_memory2')
-        result['run_seconds'] = runtime
+    except ImportError:
+        runtime_profile = False
+ 
+    # Init variables
+    result = dict(result=None, traceback=None)
+
+    # If we're profiling the run
+    if runtime_profile:
+        try:
+            # Init function tuple
+            proc = (node.run, (), {'updatehash' : updatehash})
+            start = datetime.datetime.now()
+            mem_mb, retval = memory_profiler.memory_usage(proc=proc, retval=True,
+                                                          include_children=True,
+                                                          max_usage=True, interval=.9e-6)
+            run_secs = (datetime.datetime.now() - start).total_seconds()
+            result['result'] = retval
+            result['node_memory'] = mem_mb[0]/1024.0
+            result['run_seconds'] = run_secs
+            if hasattr(retval.runtime, 'get'):
+                result['cmd_memory'] = retval.runtime.get('cmd_memory')
+                result['cmd_threads'] = retval.runtime.get('cmd_threads')
+        except:
+            etype, eval, etr = sys.exc_info()
+            result['traceback'] = format_exception(etype,eval,etr)
+            result['result'] = node.result
+    # Otherwise, execute node.run as normal
     else:
         try:
             result['result'] = node.run(updatehash=updatehash)
@@ -51,57 +77,76 @@ class NonDaemonProcess(Process):
 
     daemon = property(_get_daemon, _set_daemon)
 
+
 class NonDaemonPool(pool.Pool):
     """A process pool with non-daemon processes.
     """
     Process = NonDaemonProcess
 
-class MultiProcPlugin(DistributedPluginBase):
-    """Execute workflow with multiprocessing
+logger = logging.getLogger('workflow')
+
+def release_lock(args):
+    semaphore_singleton.semaphore.release()
+
+class ResourceMultiProcPlugin(DistributedPluginBase):
+    """Execute workflow with multiprocessing, not sending more jobs at once
+    than the system can support.
 
     The plugin_args input to run can be used to control the multiprocessing
-    execution. Currently supported options are:
+    execution and defining the maximum amount of memory and threads that 
+    should be used. When those parameters are not specified,
+    the number of threads and memory of the system is used.
 
-    - n_procs : number of processes to use
+    System consuming nodes should be tagged:
+    memory_consuming_node.interface.estimated_memory = 8 #Gb
+    thread_consuming_node.interface.num_threads = 16
+
+    The default number of threads and memory for a node is 1. 
+
+    Currently supported options are:
+
     - non_daemon : boolean flag to execute as non-daemon processes
+    - num_threads: maximum number of threads to be executed in parallel
+    - estimated_memory: maximum memory that can be used at once.
 
     """
 
     def __init__(self, plugin_args=None):
-        super(MultiProcPlugin, self).__init__(plugin_args=plugin_args)
+        super(ResourceMultiProcPlugin, self).__init__(plugin_args=plugin_args)
         self._taskresult = {}
         self._taskid = 0
         non_daemon = True
-        n_procs = cpu_count()
-        if plugin_args:
-            if 'n_procs' in plugin_args:
-                n_procs = plugin_args['n_procs']
-            if 'non_daemon' in plugin_args:
+        self.plugin_args = plugin_args
+        self.processors = cpu_count()
+        memory = psutil.virtual_memory()
+        self.memory = float(memory.total) / (1024.0**3)
+        if self.plugin_args:
+            if 'non_daemon' in self.plugin_args:
                 non_daemon = plugin_args['non_daemon']
+            if 'n_procs' in self.plugin_args:
+                self.processors = self.plugin_args['n_procs']
+            if 'memory' in self.plugin_args:
+                self.memory = self.plugin_args['memory']
+
         if non_daemon:
             # run the execution using the non-daemon pool subclass
-            self.pool = NonDaemonPool(processes=n_procs)
+            self.pool = NonDaemonPool(processes=self.processors)
         else:
-            self.pool = Pool(processes=n_procs)
+            self.pool = Pool(processes=self.processors)
+
+    def _wait(self):
+        if len(self.pending_tasks) > 0:
+            semaphore_singleton.semaphore.acquire()
+        semaphore_singleton.semaphore.release()
 
 
     def _get_result(self, taskid):
         if taskid not in self._taskresult:
-            raise RuntimeError('Multiproc task %d not found'%taskid)
+            raise RuntimeError('Multiproc task %d not found' % taskid)
         if not self._taskresult[taskid].ready():
             return None
         return self._taskresult[taskid].get()
 
-    def _submit_job(self, node, updatehash=False):
-        self._taskid += 1
-        try:
-            if node.inputs.terminal_output == 'stream':
-                node.inputs.terminal_output = 'allatonce'
-        except:
-            pass
-        self._taskresult[self._taskid] = self.pool.apply_async(run_node, (node,
-                                                                updatehash,))
-        return self._taskid
 
     def _report_crash(self, node, result=None):
         if result and result['traceback']:
@@ -115,60 +160,6 @@ class MultiProcPlugin(DistributedPluginBase):
     def _clear_task(self, taskid):
         del self._taskresult[taskid]
 
-
-
-import numpy as np
-from copy import deepcopy
-from ..engine import (MapNode, str2bool)
-import datetime
-import psutil
-from ... import logging
-import semaphore_singleton
-logger = logging.getLogger('workflow')
-
-def release_lock(args):
-    semaphore_singleton.semaphore.release()
-
-class ResourceMultiProcPlugin(MultiProcPlugin):
-    """Execute workflow with multiprocessing not sending more jobs at once
-    than the system can support.
-
-    The plugin_args input to run can be used to control the multiprocessing
-    execution and defining the maximum amount of memory and threads that 
-    should be used. When those parameters are not specified,
-    the number of threads and memory of the system is used.
-
-    System consuming nodes should be tagged:
-    memory_consuming_node.interface.memory = 8 #Gb
-    thread_consuming_node.interface.num_threads = 16
-
-    The default number of threads and memory for a node is 1. 
-
-    Currently supported options are:
-
-    - num_thread: maximum number of threads to be executed in parallel
-    - memory: maximum memory that can be used at once.
-
-    """
-
-    def __init__(self, plugin_args=None):
-        super(ResourceMultiProcPlugin, self).__init__(plugin_args=plugin_args)
-        self.plugin_args = plugin_args
-        self.processors = cpu_count()
-        memory = psutil.virtual_memory()
-        self.memory = memory.total / (1024*1024*1024)
-        if self.plugin_args:
-            if 'n_procs' in self.plugin_args:
-                self.processors = self.plugin_args['n_procs']
-            if 'memory' in self.plugin_args:
-                self.memory = self.plugin_args['memory']
-
-    def _wait(self):
-        if len(self.pending_tasks) > 0:
-            semaphore_singleton.semaphore.acquire()
-        semaphore_singleton.semaphore.release()
-
-
     def _submit_job(self, node, updatehash=False):
         self._taskid += 1
         try:
@@ -176,9 +167,14 @@ class ResourceMultiProcPlugin(MultiProcPlugin):
                 node.inputs.terminal_output = 'allatonce'
         except:
             pass
-        self._taskresult[self._taskid] = self.pool.apply_async(run_node,
-                                                               (node, updatehash, self.plugin_args),
-                                                               callback=release_lock)
+        try:
+            runtime_profile = self.plugin_args['runtime_profile']
+        except:
+            runtime_profile = False
+        self._taskresult[self._taskid] = \
+            self.pool.apply_async(run_node,
+                                  (node, updatehash, runtime_profile),
+                                  callback=release_lock)
         return self._taskid
 
     def _send_procs_to_workers(self, updatehash=False, graph=None):
@@ -196,7 +192,7 @@ class ResourceMultiProcPlugin(MultiProcPlugin):
         for jobid in jobids:
             busy_memory+= self.procs[jobid]._interface.estimated_memory
             busy_processors+= self.procs[jobid]._interface.num_threads
-                
+
         free_memory = self.memory - busy_memory
         free_processors = self.processors - busy_processors
 
@@ -220,7 +216,7 @@ class ResourceMultiProcPlugin(MultiProcPlugin):
             if self.procs[jobid]._interface.estimated_memory <= free_memory and self.procs[jobid]._interface.num_threads <= free_processors:
                 logger.info('Executing: %s ID: %d' %(self.procs[jobid]._id, jobid))
                 executing_now.append(self.procs[jobid])
-                
+
                 if isinstance(self.procs[jobid], MapNode):
                     try:
                         num_subnodes = self.procs[jobid].num_subnodes()
@@ -269,7 +265,7 @@ class ResourceMultiProcPlugin(MultiProcPlugin):
                     self._remove_node_dirs()
 
                 else:
-                    logger.debug('submitting', jobid)
+                    logger.debug('submitting %s' % str(jobid))
                     tid = self._submit_job(deepcopy(self.procs[jobid]), updatehash=updatehash)
                     if tid is None:
                         self.proc_done[jobid] = False
