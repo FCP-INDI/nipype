@@ -545,17 +545,8 @@ connected.
                 fp.writelines('\n'.join(all_lines))
         return all_lines
 
-    def run(self, plugin=None, plugin_args=None, updatehash=False):
-        """ Execute the workflow
-
-        Parameters
-        ----------
-
-        plugin: plugin name or object
-            Plugin to use for execution. You can create your own plugins for
-            execution.
-        plugin_args : dictionary containing arguments to be sent to plugin
-            constructor. see individual plugin doc strings for details.
+    def _prep(self, plugin=None, plugin_args=None, updatehash=False):
+        """ Prepare the workflow for execution
         """
         if plugin is None:
             plugin = config.get('execution', 'plugin')
@@ -592,17 +583,46 @@ connected.
         self._configure_exec_nodes(execgraph)
         if str2bool(self.config['execution']['create_report']):
             self._write_report_info(self.base_dir, self.name, execgraph)
+
+        # Return the plugin runner
+        return runner, execgraph
+
+    def run(self, plugin=None, plugin_args=None, updatehash=False):
+        """ Execute the workflow
+
+        Parameters
+        ----------
+        plugin: plugin name or object
+            Plugin to use for execution. You can create your own plugins for
+            execution.
+        plugin_args : dictionary containing arguments to be sent to plugin
+            constructor. see individual plugin doc strings for details.
+        """
+
+        # Prepare the plugin
+        runner, execgraph = self._prep(plugin=plugin, plugin_args=plugin_args,
+                                      updatehash=updatehash)
+        # Execute the plugin using workflow graph execgraph
         runner.run(execgraph, updatehash=updatehash, config=self.config)
+
+        # Post book-keeping
+        self._post_run(execgraph)
+
+        # Return the workflow graph
+        return execgraph
+
+    def _post_run(self, execgraph):
+        """ Post-workflow run bookkeeping
+        """
+
         datestr = datetime.utcnow().strftime('%Y%m%dT%H%M%S')
         if str2bool(self.config['execution']['write_provenance']):
             prov_base = op.join(self.base_dir,
                                 'workflow_provenance_%s' % datestr)
             logger.info('Provenance file prefix: %s' % prov_base)
             write_workflow_prov(execgraph, prov_base, format='all')
-        return execgraph
 
     # PRIVATE API AND FUNCTIONS
-
     def _write_report_info(self, workingdir, name, graph):
         if workingdir is None:
             workingdir = os.getcwd()
