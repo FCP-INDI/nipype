@@ -601,9 +601,9 @@ connected.
 
         # Prepare the plugin
         runner, execgraph = self._prep(plugin=plugin, plugin_args=plugin_args,
-                                      updatehash=updatehash)
+                                       updatehash=updatehash)
         # Execute the plugin using workflow graph execgraph
-        runner.run(execgraph, updatehash=updatehash, config=self.config)
+        runner.run(execgraph, self.config, updatehash=updatehash)
 
         # Post book-keeping
         self._post_run(execgraph)

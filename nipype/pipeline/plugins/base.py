@@ -267,11 +267,9 @@ class DistributedPluginBase(PluginBase):
             else:
                 logger.debug('Not submitting')
             self._wait()
-            
+
         self._remove_node_dirs()
         report_nodes_not_run(notrun)
-
-
 
     def _wait(self):
         sleep(float(self._config['execution']['poll_sleep_duration']))
