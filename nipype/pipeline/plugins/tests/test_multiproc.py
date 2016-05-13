@@ -131,7 +131,7 @@ def test_do_not_use_more_memory_then_specified():
     handler = logging.FileHandler(LOG_FILENAME)
     my_logger.addHandler(handler)
 
-    max_memory = 10
+    max_memory = 1
     pipe = pe.Workflow(name='pipe')
     n1 = pe.Node(interface=TestInterfaceSingleNode(), name='n1')
     n2 = pe.Node(interface=TestInterfaceSingleNode(), name='n2')
@@ -140,14 +140,14 @@ def test_do_not_use_more_memory_then_specified():
 
     n1.interface.estimated_memory_gb = 1
     n2.interface.estimated_memory_gb = 1
-    n3.interface.estimated_memory_gb = 10
+    n3.interface.estimated_memory_gb = 1
     n4.interface.estimated_memory_gb = 1
 
     pipe.connect(n1, 'output1', n2, 'input1')
     pipe.connect(n1, 'output1', n3, 'input1')
     pipe.connect(n2, 'output1', n4, 'input1')
     pipe.connect(n3, 'output1', n4, 'input2')
-    n1.inputs.input1 = 10
+    n1.inputs.input1 = 1
 
     pipe.run(plugin='MultiProc',
              plugin_args={'memory': max_memory,
@@ -190,7 +190,7 @@ def test_do_not_use_more_threads_then_specified():
     handler = logging.FileHandler(LOG_FILENAME)
     my_logger.addHandler(handler)
 
-    max_threads = 10
+    max_threads = 4
     pipe = pe.Workflow(name='pipe')
     n1 = pe.Node(interface=TestInterfaceSingleNode(), name='n1')
     n2 = pe.Node(interface=TestInterfaceSingleNode(), name='n2')
@@ -199,14 +199,14 @@ def test_do_not_use_more_threads_then_specified():
 
     n1.interface.num_threads = 1
     n2.interface.num_threads = 1
-    n3.interface.num_threads = 10
+    n3.interface.num_threads = 4
     n4.interface.num_threads = 1
 
     pipe.connect(n1, 'output1', n2, 'input1')
     pipe.connect(n1, 'output1', n3, 'input1')
     pipe.connect(n2, 'output1', n4, 'input1')
     pipe.connect(n3, 'output1', n4, 'input2')
-    n1.inputs.input1 = 10
+    n1.inputs.input1 = 4
     pipe.config['execution']['poll_sleep_duration'] = 1
     pipe.run(plugin='MultiProc', plugin_args={'n_procs': max_threads,
                                               'status_callback': log_nodes_cb})
