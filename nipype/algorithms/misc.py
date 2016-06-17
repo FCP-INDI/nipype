@@ -15,6 +15,7 @@ from __future__ import absolute_import
 from __future__ import division
 from builtins import zip
 from builtins import range
+from future.utils import raise_from
 
 import os
 import os.path as op
@@ -302,7 +303,7 @@ class TSNR(BaseInterface):
         vollist = [nb.load(filename) for filename in self.inputs.in_file]
         data = np.concatenate([vol.get_data().reshape(
             vol.get_shape()[:3] + (-1,)) for vol in vollist], axis=3)
-        data = data.nan_to_num()
+        data = np.nan_to_num(data)
 
         if data.dtype.kind == 'i':
             header.set_data_dtype(np.float32)
@@ -857,9 +858,9 @@ class AddCSVRow(BaseInterface):
     def _run_interface(self, runtime):
         try:
             import pandas as pd
-        except ImportError:
-            raise ImportError(('This interface requires pandas '
-                               '(http://pandas.pydata.org/) to run.'))
+        except ImportError as e:
+            raise_from(ImportError('This interface requires pandas '
+                                    '(http://pandas.pydata.org/) to run.'), e)
 
         try:
             import lockfile as pl

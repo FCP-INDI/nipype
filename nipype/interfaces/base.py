@@ -19,6 +19,7 @@ from configparser import NoOptionError
 from copy import deepcopy
 import datetime
 import errno
+import locale
 import os
 import re
 import platform
@@ -47,7 +48,7 @@ from ..utils.misc import is_container, trim, str2bool
 from ..utils.provenance import write_provenance
 from .. import config, logging, LooseVersion
 from .. import __version__
-from ..external.six import string_types
+from ..external.six import string_types, text_type
 
 nipype_version = LooseVersion(__version__)
 
@@ -63,17 +64,6 @@ class NipypeInterfaceError(Exception):
 
     def __str__(self):
         return repr(self.value)
-
-
-def _unlock_display(ndisplay):
-    lockf = os.path.join('/tmp', '.X%d-lock' % ndisplay)
-    try:
-        os.remove(lockf)
-    except:
-        return False
-
-    return True
-
 
 def _exists_in_path(cmd, environ):
     '''
@@ -764,7 +754,7 @@ class BaseInterface(Interface):
             raise Exception('No input_spec in class: %s' %
                             self.__class__.__name__)
         self.inputs = self.input_spec(**inputs)
-        self.estimated_memory = 1
+        self.estimated_memory_gb = 1
         self.num_threads = 1
 
     @classmethod
@@ -872,7 +862,7 @@ class BaseInterface(Interface):
         """
         helpstr = ['Outputs::', '']
         if cls.output_spec:
-            outputs = cls.output_spec()
+            outputs = cls.output_spec()  #pylint: disable=E1102
             for name, spec in sorted(outputs.traits(transient=None).items()):
                 helpstr += cls._get_trait_desc(outputs, name, spec)
         if len(helpstr) == 2:
@@ -884,7 +874,8 @@ class BaseInterface(Interface):
         """
         outputs = None
         if self.output_spec:
-            outputs = self.output_spec()
+            outputs = self.output_spec()  #pylint: disable=E1102
+
         return outputs
 
     @classmethod
@@ -989,7 +980,10 @@ class BaseInterface(Interface):
 
             vdisp = Xvfb(nolisten='tcp')
             vdisp.start()
-            vdisp_num = vdisp.vdisplay_num
+            try:
+                vdisp_num = vdisp.new_display
+            except AttributeError:  # outdated version of xvfbwrapper
+                vdisp_num = vdisp.vdisplay_num
 
             iflogger.info('Redirecting X to :%d' % vdisp_num)
             runtime.environ['DISPLAY'] = ':%d' % vdisp_num
@@ -997,14 +991,7 @@ class BaseInterface(Interface):
         runtime = self._run_interface(runtime)
 
         if self._redirect_x:
-            if sysdisplay is None:
-                os.unsetenv('DISPLAY')
-            else:
-                os.environ['DISPLAY'] = sysdisplay
-
-            iflogger.info('Freeing X :%d' % vdisp_num)
             vdisp.stop()
-            _unlock_display(vdisp_num)
 
         return runtime
 
@@ -1069,7 +1056,7 @@ class BaseInterface(Interface):
 
             if config.has_option('logging', 'interface_level') and \
                     config.get('logging', 'interface_level').lower() == 'debug':
-                inputs_str = "Inputs:" + str(self.inputs) + "\n"
+                inputs_str = "\nInputs:" + str(self.inputs) + "\n"
             else:
                 inputs_str = ''
 
@@ -1165,6 +1152,9 @@ class Stream(object):
         self._buf = ''
         self._rows = []
         self._lastidx = 0
+        self.default_encoding = locale.getdefaultlocale()[1]
+        if self.default_encoding is None:
+            self.default_encoding = 'UTF-8'
 
     def fileno(self):
         "Pass-through for file descriptor."
@@ -1179,7 +1169,7 @@ class Stream(object):
     def _read(self, drain):
         "Read from the file descriptor"
         fd = self.fileno()
-        buf = os.read(fd, 4096).decode()
+        buf = os.read(fd, 4096).decode(self.default_encoding)
         if not buf and not self._buf:
             return None
         if '\n' not in buf:
@@ -1206,41 +1196,143 @@ class Stream(object):
 
 # Get number of threads for process
 def _get_num_threads(proc):
-    '''
-    '''
+    """Function to get the number of threads a process is using
+    NOTE: If
+
+    Parameters
+    ----------
+    proc : psutil.Process instance
+        the process to evaluate thead usage of
+
+    Returns
+    -------
+    num_threads : int
+        the number of threads that the process is using
+    """
 
     # Import packages
     import psutil
-    import logging as lg
 
-    # Init variables
-    num_threads = proc.num_threads()
+    # If process is running
+    if proc.status() == psutil.STATUS_RUNNING:
+        num_threads = proc.num_threads()
+    elif proc.num_threads() > 1:
+        tprocs = [psutil.Process(thr.id) for thr in proc.threads()]
+        alive_tprocs = [tproc for tproc in tprocs if tproc.status() == psutil.STATUS_RUNNING]
+        num_threads = len(alive_tprocs)
+    else:
+        num_threads = 1
+
+    # Try-block for errors
     try:
-        num_children = len(proc.children())
-        for child in proc.children():
-            num_threads = max(num_threads, num_children,
-                              child.num_threads(), len(child.children()))
+        child_threads = 0
+        # Iterate through child processes and get number of their threads
+        for child in proc.children(recursive=True):
+            # Leaf process
+            if len(child.children()) == 0:
+                # If process is running, get its number of threads
+                if child.status() == psutil.STATUS_RUNNING:
+                    child_thr = child.num_threads()
+                # If its not necessarily running, but still multi-threaded
+                elif child.num_threads() > 1:
+                    # Cast each thread as a process and check for only running
+                    tprocs = [psutil.Process(thr.id) for thr in child.threads()]
+                    alive_tprocs = [tproc for tproc in tprocs if tproc.status() == psutil.STATUS_RUNNING]
+                    child_thr = len(alive_tprocs)
+                # Otherwise, no threads are running
+                else:
+                    child_thr = 0
+                # Increment child threads
+                child_threads += child_thr
+    # Catch any NoSuchProcess errors
     except psutil.NoSuchProcess:
         pass
 
+    # Number of threads is max between found active children and parent
+    num_threads = max(child_threads, num_threads)
+
+    # Return number of threads found
     return num_threads
 
 
-# Get max resources used for process
-def _get_max_resources_used(proc, mem_mb, num_threads, poll=False):
-    '''
-    docstring
-    '''
+# Get ram usage of process
+def _get_ram_mb(pid, pyfunc=False):
+    """Function to get the RAM usage of a process and its children
+
+    Parameters
+    ----------
+    pid : integer
+        the PID of the process to get RAM usage of
+    pyfunc : boolean (optional); default=False
+        a flag to indicate if the process is a python function;
+        when Pythons are multithreaded via multiprocess or threading,
+        children functions include their own memory + parents. if this
+        is set, the parent memory will removed from children memories
+
+    Reference: http://ftp.dev411.com/t/python/python-list/095thexx8g/multiprocessing-forking-memory-usage
+
+    Returns
+    -------
+    mem_mb : float
+        the memory RAM in MB utilized by the process PID
+    """
 
     # Import packages
-    from memory_profiler import _get_memory
+    import psutil
+
+    # Init variables
+    _MB = 1024.0**2
+
+    # Try block to protect against any dying processes in the interim
+    try:
+        # Init parent
+        parent = psutil.Process(pid)
+        # Get memory of parent
+        parent_mem = parent.memory_info().rss
+        mem_mb = parent_mem/_MB
+
+        # Iterate through child processes
+        for child in parent.children(recursive=True):
+            child_mem = child.memory_info().rss
+            if pyfunc:
+                child_mem -= parent_mem
+            mem_mb += child_mem/_MB
+
+    # Catch if process dies, return gracefully
+    except psutil.NoSuchProcess:
+        pass
+
+    # Return memory
+    return mem_mb
+
+
+# Get max resources used for process
+def get_max_resources_used(pid, mem_mb, num_threads, pyfunc=False):
+    """Function to get the RAM and threads usage of a process
+
+    Paramters
+    ---------
+    pid : integer
+        the process ID of process to profile
+    mem_mb : float
+        the high memory watermark so far during process execution (in MB)
+    num_threads: int
+        the high thread watermark so far during process execution
+
+    Returns
+    -------
+    mem_mb : float
+        the new high memory watermark of process (MB)
+    num_threads : float
+        the new high thread watermark of process
+    """
+
+    # Import packages
     import psutil
 
     try:
-        mem_mb = max(mem_mb, _get_memory(proc.pid, include_children=True))
-        num_threads = max(num_threads, _get_num_threads(psutil.Process(proc.pid)))
-        if poll:
-            proc.poll()
+        mem_mb = max(mem_mb, _get_ram_mb(pid, pyfunc=pyfunc))
+        num_threads = max(num_threads, _get_num_threads(psutil.Process(pid)))
     except Exception as exc:
         iflogger.info('Could not get resources used by process. Error: %s'\
                       % exc)
@@ -1255,13 +1347,17 @@ def run_command(runtime, output=None, timeout=0.01, redirect_x=False):
     The returned runtime contains a merged stdout+stderr log with timestamps
     """
 
-    # Import packages
+    # Init logger
+    logger = logging.getLogger('workflow')
+
+    # Default to profiling the runtime
     try:
-        import memory_profiler
         import psutil
-        mem_prof = True
-    except:
-        mem_prof = False
+        runtime_profile = True
+    except ImportError as exc:
+        logger.info('Unable to import packages needed for runtime profiling. '\
+                    'Turning off runtime profiler. Reason: %s' % exc)
+        runtime_profile = False
 
     # Init variables
     PIPE = subprocess.PIPE
@@ -1273,11 +1369,14 @@ def run_command(runtime, output=None, timeout=0.01, redirect_x=False):
             raise RuntimeError('Xvfb was not found, X redirection aborted')
         cmdline = 'xvfb-run -a ' + cmdline
 
+    default_encoding = locale.getdefaultlocale()[1]
+    if default_encoding is None:
+        default_encoding = 'UTF-8'
     if output == 'file':
         errfile = os.path.join(runtime.cwd, 'stderr.nipype')
         outfile = os.path.join(runtime.cwd, 'stdout.nipype')
-        stderr = open(errfile, 'wt')  # t=='text'===default
-        stdout = open(outfile, 'wt')
+        stderr = open(errfile, 'wb')  # t=='text'===default
+        stdout = open(outfile, 'wb')
 
         proc = subprocess.Popen(cmdline,
                                 stdout=stdout,
@@ -1297,9 +1396,9 @@ def run_command(runtime, output=None, timeout=0.01, redirect_x=False):
     outfile = os.path.join(runtime.cwd, 'stdout.nipype')
 
     # Init variables for memory profiling
-    mem_mb = -1
-    num_threads = -1
-    interval = 1
+    mem_mb = 0
+    num_threads = 1
+    interval = .5
 
     if output == 'stream':
         streams = [Stream('stdout', proc.stdout), Stream('stderr', proc.stderr)]
@@ -1317,11 +1416,12 @@ def run_command(runtime, output=None, timeout=0.01, redirect_x=False):
                 for stream in res[0]:
                     stream.read(drain)
         while proc.returncode is None:
-            if mem_prof:
+            if runtime_profile:
                 mem_mb, num_threads = \
-                    _get_max_resources_used(proc, mem_mb, num_threads)
+                    get_max_resources_used(proc.pid, mem_mb, num_threads)
             proc.poll()
             _process()
+            time.sleep(interval)
         _process(drain=1)
 
         # collect results, merge and return
@@ -1335,48 +1435,45 @@ def run_command(runtime, output=None, timeout=0.01, redirect_x=False):
         result['merged'] = [r[1] for r in temp]
 
     if output == 'allatonce':
-        if mem_prof:
+        if runtime_profile:
             while proc.returncode is None:
                 mem_mb, num_threads = \
-                    _get_max_resources_used(proc, mem_mb, num_threads, poll=True)
+                    get_max_resources_used(proc.pid, mem_mb, num_threads)
+                proc.poll()
+                time.sleep(interval)
         stdout, stderr = proc.communicate()
-        if stdout and isinstance(stdout, bytes):
-            try:
-                stdout = stdout.decode()
-            except UnicodeDecodeError:
-                stdout = stdout.decode("ISO-8859-1")
-        if stderr and isinstance(stderr, bytes):
-            try:
-                stderr = stderr.decode()
-            except UnicodeDecodeError:
-                stderr = stderr.decode("ISO-8859-1")
-
-        result['stdout'] = str(stdout).split('\n')
-        result['stderr'] = str(stderr).split('\n')
+        stdout = stdout.decode(default_encoding)
+        stderr = stderr.decode(default_encoding)
+        result['stdout'] = stdout.split('\n')
+        result['stderr'] = stderr.split('\n')
         result['merged'] = ''
     if output == 'file':
-        if mem_prof:
+        if runtime_profile:
             while proc.returncode is None:
                 mem_mb, num_threads = \
-                    _get_max_resources_used(proc, mem_mb, num_threads, poll=True)
+                    get_max_resources_used(proc.pid, mem_mb, num_threads)
+                proc.poll()
+                time.sleep(interval)
         ret_code = proc.wait()
         stderr.flush()
         stdout.flush()
-        result['stdout'] = [line.strip() for line in open(outfile).readlines()]
-        result['stderr'] = [line.strip() for line in open(errfile).readlines()]
+        result['stdout'] = [line.decode(default_encoding).strip() for line in open(outfile, 'rb').readlines()]
+        result['stderr'] = [line.decode(default_encoding).strip() for line in open(errfile, 'rb').readlines()]
         result['merged'] = ''
     if output == 'none':
-        if mem_prof:
+        if runtime_profile:
             while proc.returncode is None:
                 mem_mb, num_threads = \
-                    _get_max_resources_used(proc, mem_mb, num_threads, poll=True)
+                    get_max_resources_used(proc.pid, mem_mb, num_threads)
+                proc.poll()
+                time.sleep(interval)
         proc.communicate()
         result['stdout'] = []
         result['stderr'] = []
         result['merged'] = ''
 
-    setattr(runtime, 'cmd_memory', mem_mb/1024.0)
-    setattr(runtime, 'cmd_threads', num_threads)
+    setattr(runtime, 'runtime_memory_gb', mem_mb/1024.0)
+    setattr(runtime, 'runtime_threads', num_threads)
     runtime.stderr = '\n'.join(result['stderr'])
     runtime.stdout = '\n'.join(result['stdout'])
     runtime.merged = result['merged']
@@ -1546,8 +1643,8 @@ class CommandLine(BaseInterface):
 
     def version_from_command(self, flag='-v'):
         cmdname = self.cmd.split()[0]
-        if _exists_in_path(cmdname):
-            env = dict(os.environ)
+        env = dict(os.environ)
+        if _exists_in_path(cmdname, env):
             out_environ = self._get_environ()
             env.update(out_environ)
             proc = subprocess.Popen(' '.join((cmdname, flag)),
@@ -1709,7 +1806,7 @@ class CommandLine(BaseInterface):
         metadata = dict(name_source=lambda t: t is not None)
         traits = self.inputs.traits(**metadata)
         if traits:
-            outputs = self.output_spec().get()
+            outputs = self.output_spec().get()  #pylint: disable=E1102
             for name, trait_spec in traits.items():
                 out_name = name
                 if trait_spec.output_name is not None:
@@ -1827,7 +1924,7 @@ class SEMLikeCommandLine(CommandLine):
     """
 
     def _list_outputs(self):
-        outputs = self.output_spec().get()
+        outputs = self.output_spec().get()  #pylint: disable=E1102
         return self._outputs_from_inputs(outputs)
 
     def _outputs_from_inputs(self, outputs):
