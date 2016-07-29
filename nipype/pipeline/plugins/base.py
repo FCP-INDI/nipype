@@ -20,6 +20,7 @@ from warnings import warn
 import numpy as np
 import scipy.sparse as ssp
 
+
 from ...utils.filemanip import savepkl, loadpkl
 from ...utils.misc import str2bool
 from ..engine.utils import (nx, dfs_preorder, topological_sort)
@@ -234,6 +235,7 @@ class DistributedPluginBase(PluginBase):
         notrun = []
         while np.any(self.proc_done == False) | \
                 np.any(self.proc_pending == True):
+
             toappend = []
             # trigger callbacks for any pending results
             while self.pending_tasks:
@@ -245,7 +247,7 @@ class DistributedPluginBase(PluginBase):
                             notrun.append(self._clean_queue(jobid, graph,
                                                             result=result))
                         else:
-                            self._task_finished_cb(jobid, result)
+                            self._task_finished_cb(jobid)
                             self._remove_node_dirs()
                         self._clear_task(taskid)
                     else:
@@ -258,13 +260,13 @@ class DistributedPluginBase(PluginBase):
             if toappend:
                 self.pending_tasks.extend(toappend)
             num_jobs = len(self.pending_tasks)
-            logger.debug('Number of pending tasks: %d' % num_jobs)
             if num_jobs < self.max_jobs:
                 self._send_procs_to_workers(updatehash=updatehash,
                                             graph=graph)
             else:
                 logger.debug('Not submitting')
             self._wait()
+            
         self._remove_node_dirs()
         report_nodes_not_run(notrun)
 
@@ -367,7 +369,7 @@ class DistributedPluginBase(PluginBase):
                     self.proc_done[jobid] = True
                     self.proc_pending[jobid] = True
                     # Send job to task manager and add to pending tasks
-                    logger.info('Executing: %s ID: %d' %
+                    logger.info('Submitting: %s ID: %d' %
                                 (self.procs[jobid]._id, jobid))
                     if self._status_callback:
                         self._status_callback(self.procs[jobid], 'start')
@@ -409,12 +411,12 @@ class DistributedPluginBase(PluginBase):
                                 self.proc_pending[jobid] = False
                             else:
                                 self.pending_tasks.insert(0, (tid, jobid))
-                    logger.info('Finished executing: %s ID: %d' %
+                    logger.info('Finished submitting: %s ID: %d' %
                                 (self.procs[jobid]._id, jobid))
             else:
                 break
 
-    def _task_finished_cb(self, jobid, result=None):
+    def _task_finished_cb(self, jobid):
         """ Extract outputs and assign to inputs of dependent tasks
 
         This is called when a job is completed.
@@ -422,10 +424,7 @@ class DistributedPluginBase(PluginBase):
         logger.info('[Job finished] jobname: %s jobid: %d' %
                     (self.procs[jobid]._id, jobid))
         if self._status_callback:
-            if result == None:
-                if self._taskresult.has_key(jobid):
-                    result = self._taskresult[jobid].get()
-            self._status_callback(self.procs[jobid], 'end', result)
+            self._status_callback(self.procs[jobid], 'end')
         # Update job and worker queues
         self.proc_pending[jobid] = False
         # update the job dependency structure
