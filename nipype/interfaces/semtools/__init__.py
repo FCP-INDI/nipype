@@ -1,4 +1,5 @@
-from __future__ import absolute_import
+"""SEM Tools are useful tools for Structural Equation Modeling."""
+
 from .diffusion import *
 from .featurecreator import GenerateCsfClippedFromClassifiedImage
 from .segmentation import *

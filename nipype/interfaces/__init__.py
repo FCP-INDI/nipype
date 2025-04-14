@@ -5,9 +5,7 @@ Package contains interfaces for using existing functionality in other packages
 
 Requires Packages to be installed
 """
+__docformat__ = "restructuredtext"
 
-from __future__ import absolute_import
-__docformat__ = 'restructuredtext'
-
-from .io import DataGrabber, DataSink, SelectFiles
+from .io import DataGrabber, DataSink, SelectFiles, BIDSDataGrabber
 from .utility import IdentityInterface, Rename, Function, Select, Merge

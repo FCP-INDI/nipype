@@ -1,54 +1,40 @@
 # emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
 # vi: set ft=python sts=4 ts=4 sw=4 et:
-from builtins import open
 
-import os
-import tempfile
-import shutil
-
-from nipype.testing import (assert_equal, assert_true,
-                            skipif)
+import pytest
 import nipype.interfaces.fsl.model as fsl
-from nipype.interfaces.fsl import Info
 from nipype.interfaces.fsl import no_fsl
-
-tmp_infile = None
-tmp_dir = None
-cwd = None
+from pathlib import Path
+from ....pipeline import engine as pe
 
 
-@skipif(no_fsl)
-def setup_infile():
-    global tmp_infile, tmp_dir, cwd
-    cwd = os.getcwd()
-    ext = Info.output_type_to_ext(Info.output_type())
-    tmp_dir = tempfile.mkdtemp()
-    tmp_infile = os.path.join(tmp_dir, 'foo' + ext)
-    open(tmp_infile, 'w')
-    os.chdir(tmp_dir)
-    return tmp_infile, tmp_dir
+@pytest.mark.skipif(no_fsl(), reason="fsl is not installed")
+def test_MultipleRegressDesign(tmpdir):
+    designer = pe.Node(
+        fsl.MultipleRegressDesign(), name="designer", base_dir=str(tmpdir)
+    )
+    designer.inputs.regressors = dict(
+        voice_stenght=[1, 1, 1], age=[0.2, 0.4, 0.5], BMI=[1, -1, 2]
+    )
+    con1 = ["voice_and_age", "T", ["age", "voice_stenght"], [0.5, 0.5]]
+    con2 = ["just_BMI", "T", ["BMI"], [1]]
+    designer.inputs.contrasts = [
+        con1,
+        con2,
+        ["con3", "F", [con1, con2]],
+        ["con4", "F", [con2]],
+    ]
+    res = designer.run()
+    outputs = res.outputs.get_traitsfree()
 
+    for ftype in ["mat", "con", "fts", "grp"]:
+        assert Path(outputs["design_" + ftype]).exists()
 
-def teardown_infile(tmp_dir):
-    os.chdir(cwd)
-    shutil.rmtree(tmp_dir)
+    expected_content = {}
 
-
-@skipif(no_fsl)
-def test_MultipleRegressDesign():
-    _, tp_dir = setup_infile()
-    foo = fsl.MultipleRegressDesign()
-    foo.inputs.regressors = dict(voice_stenght=[1, 1, 1], age=[0.2, 0.4, 0.5], BMI=[1, -1, 2])
-    con1 = ['voice_and_age', 'T', ['age', 'voice_stenght'], [0.5, 0.5]]
-    con2 = ['just_BMI', 'T', ['BMI'], [1]]
-    foo.inputs.contrasts = [con1, con2, ['con3', 'F', [con1, con2]]]
-    res = foo.run()
-    yield assert_equal, res.outputs.design_mat, os.path.join(os.getcwd(), 'design.mat')
-    yield assert_equal, res.outputs.design_con, os.path.join(os.getcwd(), 'design.con')
-    yield assert_equal, res.outputs.design_fts, os.path.join(os.getcwd(), 'design.fts')
-    yield assert_equal, res.outputs.design_grp, os.path.join(os.getcwd(), 'design.grp')
-
-    design_mat_expected_content = """/NumWaves       3
+    expected_content[
+        "design_mat"
+    ] = """/NumWaves       3
 /NumPoints      3
 /PPheights      3.000000e+00 5.000000e-01 1.000000e+00
 
@@ -58,7 +44,9 @@ def test_MultipleRegressDesign():
 2.000000e+00 5.000000e-01 1.000000e+00
 """
 
-    design_con_expected_content = """/ContrastName1   voice_and_age
+    expected_content[
+        "design_con"
+    ] = """/ContrastName1   voice_and_age
 /ContrastName2   just_BMI
 /NumWaves       3
 /NumContrasts   2
@@ -70,14 +58,19 @@ def test_MultipleRegressDesign():
 1.000000e+00 0.000000e+00 0.000000e+00
 """
 
-    design_fts_expected_content = """/NumWaves       2
-/NumContrasts   1
+    expected_content[
+        "design_fts"
+    ] = """/NumWaves       2
+/NumContrasts   2
 
 /Matrix
 1 1
+0 1
 """
 
-    design_grp_expected_content = """/NumWaves       1
+    expected_content[
+        "design_grp"
+    ] = """/NumWaves       1
 /NumPoints      3
 
 /Matrix
@@ -85,9 +78,6 @@ def test_MultipleRegressDesign():
 1
 1
 """
-    yield assert_equal, open(os.path.join(os.getcwd(), 'design.con'), 'r').read(), design_con_expected_content
-    yield assert_equal, open(os.path.join(os.getcwd(), 'design.mat'), 'r').read(), design_mat_expected_content
-    yield assert_equal, open(os.path.join(os.getcwd(), 'design.fts'), 'r').read(), design_fts_expected_content
-    yield assert_equal, open(os.path.join(os.getcwd(), 'design.grp'), 'r').read(), design_grp_expected_content
-
-    teardown_infile(tp_dir)
+    for ftype in ["mat", "con", "fts", "grp"]:
+        outfile = "design_" + ftype
+        assert Path(outputs[outfile]).read_text() == expected_content[outfile]

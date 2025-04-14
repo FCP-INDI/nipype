@@ -1,44 +1,47 @@
 # emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
 # vi: set ft=python sts=4 ts=4 sw=4 et:
-from future import standard_library
-standard_library.install_aliases()
-from builtins import str
+from nibabel.optpkg import optional_package
+import pytest
 
-import os
-from tempfile import mkdtemp
+_, have_rdflib5, _ = optional_package("rdflib", min_version="5.0.0")
 
-from ...testing import assert_equal, assert_true, assert_false
+from nipype.utils.provenance import ProvStore, safe_encode
 
-from ..provenance import ProvStore, safe_encode, text_type
+needs_rdflib5 = pytest.mark.skipif(
+    not have_rdflib5, reason="Test requires rdflib 5.0.0 or higher"
+)
 
-def test_provenance():
+
+@needs_rdflib5
+@pytest.mark.timeout(60)
+def test_provenance(tmpdir):
+    from nipype.interfaces.base import CommandLine
+
+    tmpdir.chdir()
     ps = ProvStore()
-    from ...interfaces.base import CommandLine
-    results = CommandLine('echo hello').run()
+    results = CommandLine("echo hello").run()
     ps.add_results(results)
     provn = ps.g.get_provn()
-    prov_json = ps.g.serialize(format='json')
-    yield assert_true, 'echo hello' in provn
+    assert "echo hello" in provn
 
-def test_provenance_exists():
-    tempdir = mkdtemp()
-    cwd = os.getcwd()
-    os.chdir(tempdir)
-    from ...interfaces.base import CommandLine
-    from ... import config
-    provenance_state = config.get('execution', 'write_provenance')
-    hash_state = config.get('execution', 'hash_method')
+
+@needs_rdflib5
+@pytest.mark.timeout(60)
+def test_provenance_exists(tmpdir):
+    tmpdir.chdir()
+    from nipype import config
+    from nipype.interfaces.base import CommandLine
+
+    provenance_state = config.get("execution", "write_provenance")
+    hash_state = config.get("execution", "hash_method")
     config.enable_provenance()
-    CommandLine('echo hello').run()
-    config.set('execution', 'write_provenance', provenance_state)
-    config.set('execution', 'hash_method', hash_state)
-    provenance_exists = os.path.exists(os.path.join(tempdir, 'provenance.provn'))
-    os.chdir(cwd)
-    yield assert_true, provenance_exists
+    CommandLine("echo hello").run()
+    config.set("execution", "write_provenance", provenance_state)
+    config.set("execution", "hash_method", hash_state)
+    assert tmpdir.join("provenance.provn").check()
+
 
 def test_safe_encode():
-    a = '\xc3\xa9lg'
+    a = "\xc3\xa9lg"
     out = safe_encode(a)
-    if not isinstance(a, str):
-        a = text_type(a, 'utf-8')
-    yield assert_equal, out.value, a
+    assert out.value == a

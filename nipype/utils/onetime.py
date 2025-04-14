@@ -17,31 +17,29 @@ Hettinger. http://users.rcn.com/python/download/Descriptor.htm
 [2] Python data model, http://docs.python.org/reference/datamodel.html
 """
 
-from builtins import object
 
+class OneTimeProperty:
+    """A descriptor to make special properties that become normal attributes."""
 
-class OneTimeProperty(object):
-    """A descriptor to make special properties that become normal attributes.
-    """
     def __init__(self, func):
         """Create a OneTimeProperty instance.
 
-         Parameters
-         ----------
-           func : method
+        Parameters
+        ----------
+          func : method
 
-             The method that will be called the first time to compute a value.
-             Afterwards, the method's name will be a standard attribute holding
-             the value of this computation.
+            The method that will be called the first time to compute a value.
+            Afterwards, the method's name will be a standard attribute holding
+            the value of this computation.
         """
         self.getter = func
         self.name = func.__name__
 
     def __get__(self, obj, type=None):
-        """ Called on attribute access on the class or instance.  """
+        """Called on attribute access on the class or instance."""
         if obj is None:
-            # Being called on the class, return the original function. This way,
-            # introspection works on the class.
+            # Being called on the class, return the original function.
+            # This way, introspection works on the class.
             return self.getter
 
         val = self.getter(obj)
@@ -56,7 +54,6 @@ def setattr_on_read(func):
     # - sor_property (set on read property)
     # - prop2attr_on_read
     # ... ?
-
     """Decorator to create OneTimeProperty attributes.
 
     Parameters

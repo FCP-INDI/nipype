@@ -3,27 +3,30 @@
 # rsync -e ssh nipype-0.1-py2.5.egg cburns,nipy@frs.sourceforge.net:/home/frs/project/n/ni/nipy/nipype/nipype-0.1/
 
 PYTHON ?= python
-NOSETESTS ?= nosetests
 
-.PHONY: zipdoc sdist egg upload_to_pypi trailing-spaces clean-pyc clean-so clean-build clean-ctags clean in inplace test-code test-doc test-coverage test html specs check-before-commit check
+.PHONY: zipdoc sdist egg upload_to_pypi trailing-spaces clean-pyc clean-so clean-build clean-ctags clean in inplace test-code test-coverage test html specs check-before-commit check gen-base-dockerfile gen-main-dockerfile gen-dockerfiles
 
 zipdoc: html
 	zip documentation.zip doc/_build/html
 
+.git-blame-ignore-revs: .git/HEAD
+	git log --grep "\[ignore-rev\]\|STY: black\|run black" -i --pretty=format:"# %ad - %ae - %s%n%H" > .git-blame-ignore-revs
+	echo >> .git-blame-ignore-revs
+
 sdist: zipdoc
 	@echo "Building source distribution..."
-	python setup.py sdist
+	$(PYTHON) setup.py sdist
 	@echo "Done building source distribution."
 	# XXX copy documentation.zip to dist directory.
 
 egg: zipdoc
 	@echo "Building egg..."
-	python setup.py bdist_egg
+	$(PYTHON) setup.py bdist_egg
 	@echo "Done building egg."
 
 upload_to_pypi: zipdoc
 	@echo "Uploading to PyPi..."
-	python setup.py sdist --formats=zip,gztar upload
+	$(PYTHON) setup.py sdist --formats=zip,gztar upload
 
 trailing-spaces:
 	find . -name "*[.py|.rst]" -type f | xargs perl -pi -e 's/[ \t]*$$//'
@@ -32,6 +35,7 @@ trailing-spaces:
 
 clean-pyc:
 	find . -name "*.pyc" | xargs rm -f
+	find . -name "__pycache__" -type d | xargs rm -rf
 
 clean-so:
 	find . -name "*.so" | xargs rm -f
@@ -46,24 +50,23 @@ clean-ctags:
 clean-doc:
 	rm -rf doc/_build
 
-clean: clean-build clean-pyc clean-so clean-ctags clean-doc
+clean-tests:
+	rm -f .coverage
+
+clean: clean-build clean-pyc clean-so clean-ctags clean-doc clean-tests
 
 in: inplace # just a shortcut
 inplace:
 	$(PYTHON) setup.py build_ext -i
 
 test-code: in
-	$(NOSETESTS) -s nipype --with-doctest
+	$(PYTHON) -m pytest --doctest-modules nipype
 
-test-doc:
-	$(NOSETESTS) -s --with-doctest --doctest-tests --doctest-extension=rst \
-	--doctest-fixtures=_fixture doc/
+test-coverage: clean-tests in
+	$(PYTHON) -m pytest --doctest-modules --cov-config .coveragerc --cov=nipype nipype
 
-test-coverage:
-	$(NOSETESTS) -s --with-doctest --with-coverage --cover-package=nipype \
-	--config=.coveragerc
-
-test: clean test-code
+test: tests # just another name
+tests: clean test-code
 
 html:
 	@echo "building docs"
@@ -71,7 +74,7 @@ html:
 
 specs:
 	@echo "Checking specs and autogenerating spec tests"
-	python tools/checkspecs.py
+	env PYTHONPATH=".:$(PYTHONPATH)" $(PYTHON) tools/checkspecs.py
 
 check: check-before-commit # just a shortcut
 check-before-commit: specs trailing-spaces html test
@@ -79,3 +82,13 @@ check-before-commit: specs trailing-spaces html test
 	@echo "built docs"
 	@echo "ran test"
 	@echo "generated spec tests"
+
+gen-base-dockerfile:
+	@echo "Generating base Dockerfile"
+	bash docker/generate_dockerfiles.sh -b
+
+gen-main-dockerfile:
+	@echo "Generating main Dockerfile"
+	bash docker/generate_dockerfiles.sh -m
+
+gen-dockerfiles: gen-base-dockerfile gen-main-dockerfile

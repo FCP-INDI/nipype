@@ -1,47 +1,24 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 # emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
 # vi: set ft=python sts=4 ts=4 sw=4 et:
-"""Defines functionality for pipelined execution of interfaces
-
-The `EngineBase` class implements the more general view of a task.
-
-  .. testsetup::
-     # Change directory to provide relative paths for doctests
-     import os
-     filepath = os.path.dirname(os.path.realpath( __file__ ))
-     datadir = os.path.realpath(os.path.join(filepath, '../../testing/data'))
-     os.chdir(datadir)
-
-"""
-
-from __future__ import absolute_import
-
-from future import standard_library
-standard_library.install_aliases()
-from builtins import object
-
-try:
-    from collections import OrderedDict
-except ImportError:
-    from ordereddict import OrderedDict
-
+"""Defines functionality for pipelined execution of interfaces."""
 from copy import deepcopy
 import re
-import numpy as np
-from ...interfaces.traits_extension import traits, Undefined
+
+from ... import config
 from ...interfaces.base import DynamicTraitedSpec
 from ...utils.filemanip import loadpkl, savepkl
 
-from ... import logging
-logger = logging.getLogger('workflow')
 
+class EngineBase:
+    """
+    Defines common attributes and functions for workflows and nodes.
 
-class EngineBase(object):
-    """Defines common attributes and functions for workflows and nodes."""
+    Implements the more general view of a task.
+    """
 
     def __init__(self, name=None, base_dir=None):
-        """ Initialize base parameters of a workflow or node
+        """
+        Initialize base parameters of a workflow or node.
 
         Parameters
         ----------
@@ -53,13 +30,33 @@ class EngineBase(object):
             default=None, which results in the use of mkdtemp
 
         """
-        self.base_dir = base_dir
-        self.config = None
-        self._verify_name(name)
-        self.name = name
-        # for compatibility with node expansion using iterables
-        self._id = self.name
+        self._name = None
         self._hierarchy = None
+        self.name = name
+        self._id = self.name  # for compatibility with node expansion using iterables
+
+        self.base_dir = base_dir
+        """Define the work directory for this instance of workflow element."""
+
+        self.config = deepcopy(config._sections)
+
+    @property
+    def name(self):
+        """Set the unique name of this workflow element."""
+        return self._name
+
+    @name.setter
+    def name(self, name):
+        if not name or not re.match(r"^[\w-]+$", name):
+            raise ValueError('[Workflow|Node] name "%s" is not valid.' % name)
+        self._name = name
+
+    @property
+    def fullname(self):
+        """Build the full name down the hierarchy."""
+        if self._hierarchy:
+            return f"{self._hierarchy}.{self.name}"
+        return self.name
 
     @property
     def inputs(self):
@@ -70,28 +67,30 @@ class EngineBase(object):
         raise NotImplementedError
 
     @property
-    def fullname(self):
-        fullname = self.name
+    def itername(self):
+        """Get the name of the expanded iterable."""
+        itername = self._id
         if self._hierarchy:
-            fullname = self._hierarchy + '.' + self.name
-        return fullname
+            itername = f"{self._hierarchy}.{self._id}"
+        return itername
 
     def clone(self, name):
-        """Clone an EngineBase object
+        """
+        Clone an EngineBase object.
 
         Parameters
         ----------
 
         name : string (mandatory)
             A clone of node or workflow must have a new name
+
         """
-        if (name is None) or (name == self.name):
-            raise Exception('Cloning requires a new name')
-        self._verify_name(name)
+        if name == self.name:
+            raise ValueError('Cloning requires a new name, "%s" is in use.' % name)
         clone = deepcopy(self)
         clone.name = name
-        clone._id = name
-        clone._hierarchy = None
+        if hasattr(clone, "_id"):
+            clone._id = name
         return clone
 
     def _check_outputs(self, parameter):
@@ -102,26 +101,21 @@ class EngineBase(object):
             return True
         return hasattr(self.inputs, parameter)
 
-    def _verify_name(self, name):
-        valid_name = bool(re.match('^[\w-]+$', name))
-        if not valid_name:
-            raise ValueError('[Workflow|Node] name \'%s\' contains'
-                             ' special characters' % name)
+    def __str__(self):
+        """Convert to string."""
+        return self.fullname
 
     def __repr__(self):
-        if self._hierarchy:
-            return '.'.join((self._hierarchy, self._id))
-        else:
-            return self._id
+        """Get Python representation."""
+        return self.itername
 
     def save(self, filename=None):
+        """Store this workflow element to a file."""
         if filename is None:
-            filename = 'temp.pklz'
+            filename = "temp.pklz"
         savepkl(filename, self)
 
-    def load(self, filename):
-        if '.npz' in filename:
-            DeprecationWarning(('npz files will be deprecated in the next '
-                                'release. you can use numpy to open them.'))
-            return np.load(filename)
+    @staticmethod
+    def load(filename):
+        """Load this workflow element from a file."""
         return loadpkl(filename)

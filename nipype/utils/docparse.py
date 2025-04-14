@@ -12,11 +12,9 @@ better = fsl.Bet()
 docstring = docparse.get_doc(better.cmd, better.opt_map)
 
 """
-
 import subprocess
-from nipype.interfaces.base import CommandLine
-from nipype.utils.misc import is_container
-from nipype.external.six import string_types
+from ..interfaces.base import CommandLine
+from .misc import is_container
 
 
 def grab_doc(cmd, trap_error=True):
@@ -35,15 +33,14 @@ def grab_doc(cmd, trap_error=True):
         The command line documentation
     """
 
-    proc = subprocess.Popen(cmd,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            shell=True)
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True
+    )
     stdout, stderr = proc.communicate()
 
     if trap_error and proc.returncode:
-        msg = 'Attempting to run %s. Returned Error: %s' % (cmd, stderr)
-        raise IOError(msg)
+        msg = f"Attempting to run {cmd}. Returned Error: {stderr}"
+        raise OSError(msg)
 
     if stderr:
         # A few programs, like fast and fnirt, send their help to
@@ -79,7 +76,7 @@ def reverse_opt_map(opt_map):
             # The value is a tuple where the first element is the
             # format string and the second element is a docstring.
             value = value[0]
-        if (key != 'flags' and value is not None):
+        if key != "flags" and value is not None:
             revdict[value.split()[0]] = key
     return revdict
 
@@ -107,21 +104,21 @@ def format_params(paramlist, otherlist=None):
         The formatted docstring.
     """
 
-    hdr = 'Parameters'
-    delim = '----------'
+    hdr = "Parameters"
+    delim = "----------"
     paramlist.insert(0, delim)
     paramlist.insert(0, hdr)
-    params = '\n'.join(paramlist)
+    params = "\n".join(paramlist)
     otherparams = []
-    doc = ''.join(params)
+    doc = "".join(params)
     if otherlist:
-        hdr = 'Others Parameters'
-        delim = '-----------------'
+        hdr = "Others Parameters"
+        delim = "-----------------"
         otherlist.insert(0, delim)
         otherlist.insert(0, hdr)
-        otherlist.insert(0, '\n')
-        otherparams = '\n'.join(otherlist)
-        doc = ''.join([doc, otherparams])
+        otherlist.insert(0, "\n")
+        otherparams = "\n".join(otherlist)
+        doc = f"{doc}{otherparams}"
     return doc
 
 
@@ -134,7 +131,7 @@ def insert_doc(doc, new_items):
     Parameters
     ----------
     doc : str
-        The existing docstring we're inserting docmentation into.
+        The existing docstring we're inserting documentation into.
     new_items : list
         List of strings to be inserted in the ``doc``.
 
@@ -162,20 +159,14 @@ def insert_doc(doc, new_items):
     """
 
     # Insert new_items after the Parameters header
-    doclist = doc.split('\n')
+    doclist = doc.split("\n")
     tmpdoc = doclist[:2]
     # Add new_items
     tmpdoc.extend(new_items)
     # Add rest of documents
     tmpdoc.extend(doclist[2:])
     # Insert newlines
-    newdoc = []
-    for line in tmpdoc:
-        newdoc.append(line)
-        newdoc.append('\n')
-    # We add one too many newlines, remove it.
-    newdoc.pop(-1)
-    return ''.join(newdoc)
+    return "\n".join(tmpdoc)
 
 
 def build_doc(doc, opts):
@@ -193,13 +184,13 @@ def build_doc(doc, opts):
     -------
     newdoc : string
         The docstring with flags replaced with attribute names and
-        formated to match nipy standards (as best we can).
+        formatted to match nipy standards (as best we can).
 
     """
 
     # Split doc into line elements.  Generally, each line is an
     # individual flag/option.
-    doclist = doc.split('\n')
+    doclist = doc.split("\n")
     newdoc = []
     flags_doc = []
     for line in doclist:
@@ -208,24 +199,24 @@ def build_doc(doc, opts):
             # Probably an empty line
             continue
         # For lines we care about, the first item is the flag
-        if ',' in linelist[0]:  # sometimes flags are only seperated by comma
-            flag = linelist[0].split(',')[0]
+        if "," in linelist[0]:  # sometimes flags are only separated by comma
+            flag = linelist[0].split(",")[0]
         else:
             flag = linelist[0]
         attr = opts.get(flag)
         if attr is not None:
             # newline = line.replace(flag, attr)
             # Replace the flag with our attribute name
-            linelist[0] = '%s :\n    ' % str(attr)
+            linelist[0] = "%s :\n    " % str(attr)
             # Add some line formatting
-            newline = ' '.join(linelist)
+            newline = " ".join(linelist)
             newdoc.append(newline)
         else:
             if line[0].isspace():
                 # For all the docs I've looked at, the flags all have
                 # indentation (spaces) at the start of the line.
                 # Other parts of the docs, like 'usage' statements
-                # start with alpha-numeric characters.  We only care
+                # start with alphanumeric characters.  We only care
                 # about the flags.
                 flags_doc.append(line)
     return format_params(newdoc, flags_doc)
@@ -248,22 +239,25 @@ def get_doc(cmd, opt_map, help_flag=None, trap_error=True):
     Returns
     -------
     doc : string
-        The formated docstring
+        The formatted docstring
 
     """
-    res = CommandLine('which %s' % cmd.split(' ')[0],
-                      terminal_output='allatonce').run()
+    res = CommandLine(
+        "which %s" % cmd.split(" ")[0],
+        resource_monitor=False,
+        terminal_output="allatonce",
+    ).run()
     cmd_path = res.runtime.stdout.strip()
-    if cmd_path == '':
-        raise Exception('Command %s not found' % cmd.split(' ')[0])
+    if cmd_path == "":
+        raise Exception("Command %s not found" % cmd.split(" ")[0])
     if help_flag:
-        cmd = ' '.join((cmd, help_flag))
+        cmd = f"{cmd} {help_flag}"
     doc = grab_doc(cmd, trap_error)
     opts = reverse_opt_map(opt_map)
     return build_doc(doc, opts)
 
 
-def _parse_doc(doc, style=['--']):
+def _parse_doc(doc, style=["--"]):
     """Parses a help doc for inputs
 
     Parameters
@@ -280,15 +274,17 @@ def _parse_doc(doc, style=['--']):
 
     # Split doc into line elements.  Generally, each line is an
     # individual flag/option.
-    doclist = doc.split('\n')
+    doclist = doc.split("\n")
     optmap = {}
-    if isinstance(style, string_types):
+    if isinstance(style, (str, bytes)):
         style = [style]
     for line in doclist:
         linelist = line.split()
-        flag = [item for i, item in enumerate(linelist) if i < 2 and
-                any([item.startswith(s) for s in style]) and
-                len(item) > 1]
+        flag = [
+            item
+            for i, item in enumerate(linelist)
+            if i < 2 and item.startswith(tuple(style)) and len(item) > 1
+        ]
         if flag:
             if len(flag) == 1:
                 style_idx = [flag[0].startswith(s) for s in style].index(True)
@@ -302,11 +298,11 @@ def _parse_doc(doc, style=['--']):
                             break
                 flag = flag[style_idx.index(min(style_idx))]
                 style_idx = min(style_idx)
-            optmap[flag.split(style[style_idx])[1]] = '%s %%s' % flag
+            optmap[flag.split(style[style_idx])[1]] = "%s %%s" % flag
     return optmap
 
 
-def get_params_from_doc(cmd, style='--', help_flag=None, trap_error=True):
+def get_params_from_doc(cmd, style="--", help_flag=None, trap_error=True):
     """Auto-generate option map from command line help
 
     Parameters
@@ -327,13 +323,16 @@ def get_params_from_doc(cmd, style='--', help_flag=None, trap_error=True):
         Contains a mapping from input to command line variables
 
     """
-    res = CommandLine('which %s' % cmd.split(' ')[0],
-                      terminal_output='allatonce').run()
+    res = CommandLine(
+        "which %s" % cmd.split(" ")[0],
+        resource_monitor=False,
+        terminal_output="allatonce",
+    ).run()
     cmd_path = res.runtime.stdout.strip()
-    if cmd_path == '':
-        raise Exception('Command %s not found' % cmd.split(' ')[0])
+    if cmd_path == "":
+        raise Exception("Command %s not found" % cmd.split(" ")[0])
     if help_flag:
-        cmd = ' '.join((cmd, help_flag))
+        cmd = f"{cmd} {help_flag}"
     doc = grab_doc(cmd, trap_error)
     return _parse_doc(doc, style)
 

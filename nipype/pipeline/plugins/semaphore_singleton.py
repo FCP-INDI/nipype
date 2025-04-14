@@ -1,2 +1,3 @@
 import threading
-semaphore = threading.Semaphore(1)
+
+semaphore = threading.Semaphore(0)
