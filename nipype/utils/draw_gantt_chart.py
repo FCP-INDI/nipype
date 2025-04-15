@@ -68,11 +68,11 @@ def create_event_dict(start_time, nodes_list):
         finish_delta = (node["finish"] - start_time).total_seconds()
 
         # Populate dictionary
-        if events.has_key(start_delta):
+        if events.get(start_delta):
             events[start_delta].append(start_node)
         else:
             events[start_delta] = [start_node]
-        if events.has_key(finish_delta):
+        if events.get(finish_delta):
             events[finish_delta].append(finish_node)
         else:
             events[finish_delta] = [finish_node]
@@ -168,6 +168,7 @@ def calculate_resource_timeseries(events, resource):
 
     # Iterate through the events
     for _, _events in sorted(events.items()):
+        current_time = None
         for event in _events:
             if event["event"] == "start":
                 if resource in event:
@@ -183,7 +184,8 @@ def calculate_resource_timeseries(events, resource):
                     except ValueError:
                         continue
                 current_time = event["finish"]
-        res[current_time] = all_res
+        if current_time:
+            res[current_time] = all_res
 
     # Formulate the pandas timeseries
     time_series = pd.Series(data=list(res.values()), index=list(res.keys()))

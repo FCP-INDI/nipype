@@ -106,6 +106,5 @@ def test_callback_gantt(tmp_path: Path, plugin: str) -> None:
     with open(log_filename, "w") as _f:
         _f.write("".join(loglines))
 
-    with pytest.warns(Warning):
-        generate_gantt_chart(str(log_filename), 1 if plugin == "Linear" else 8)
+    generate_gantt_chart(str(log_filename), 1 if plugin == "Linear" else 8)
     assert (tmp_path / "callback.log.html").exists()
